@@ -14,4 +14,5 @@
     and script tags because this kinda makes sense.  In order to force
     whitespace you can use '{{ " " }}'.
 
-
+    Unlike filters that work at template runtime, this remotes whitespace
+    at compile time and does not add an overhead in template execution.
