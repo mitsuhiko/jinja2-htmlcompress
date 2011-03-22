@@ -1,0 +1,2 @@
+  jinja2htmlcompress
+    a Jinja2 extension that removes whitespace between HTML tags.
