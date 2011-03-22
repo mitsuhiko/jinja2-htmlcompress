@@ -11,11 +11,11 @@
 """
 import re
 from jinja2.ext import Extension
-from jinja2.lexer import Token
+from jinja2.lexer import Token, describe_token
 from jinja2 import TemplateSyntaxError
 
 
-_tag_re = re.compile(r'<(/?)([a-zA-Z0-9_-]+)')
+_tag_re = re.compile(r'(?:<(/?)([a-zA-Z0-9_-]+)\s*|(>\s*))(?s)')
 
 
 class HTMLCompress(Extension):
@@ -36,17 +36,20 @@ class HTMLCompress(Extension):
             buffer.append(value)
 
         for match in _tag_re.finditer(token.value):
-            closes, tag = match.groups()
+            closes, tag, sole = match.groups()
             preamble = token.value[pos:match.start()]
             write_data(preamble)
-            buffer.append(match.group())
-            if closes:
-                if stack.pop() != tag:
-                    raise TemplateSyntaxError('HTML has to be balanced '
-                        'when htmlcompress extension is active',
-                        token.lineno, stream.name, stream.filename)
+            if sole:
+                write_data(sole)
             else:
-                stack.append(tag)
+                buffer.append(match.group())
+                if closes:
+                    if stack.pop() != tag:
+                        raise TemplateSyntaxError('HTML has to be balanced '
+                            'when htmlcompress extension is active',
+                            token.lineno, stream.name, stream.filename)
+                else:
+                    stack.append(tag)
             pos = match.end()
 
         write_data(token.value[pos:])
@@ -62,9 +65,41 @@ class HTMLCompress(Extension):
             yield Token(token.lineno, 'data', value)
 
 
+class SelectiveHTMLCompress(HTMLCompress):
+
+    def filter_stream(self, stream):
+        def fail(msg):
+            raise TemplateSyntaxError(msg, stream.current.lineno,
+                                      stream.name, stream.filename)
+        stack = []
+        strip_depth = 0
+        while 1:
+            if stream.current.type == 'block_begin':
+                if stream.look().test('name:strip') or \
+                   stream.look().test('name:endstrip'):
+                    stream.skip()
+                    if stream.current.value == 'strip':
+                        strip_depth += 1
+                    else:
+                        strip_depth -= 1
+                        if strip_depth < 0:
+                            fail('Unexpected tag endstrip')
+                    stream.skip()
+                    if stream.current.type != 'block_end':
+                        fail('expected end of block, got %s' %
+                             describe_token(stream.current))
+                    stream.skip()
+            if strip_depth > 0 and stream.current.type == 'data':
+                value = self.normalize(stream.current, stack, stream)
+                yield Token(stream.current.lineno, 'data', value)
+            else:
+                yield stream.current
+            stream.next()
+
+
 def test():
     from jinja2 import Environment
-    env = Environment(extensions=[HTMLCompress], autoescape=True)
+    env = Environment(extensions=[HTMLCompress])
     tmpl = env.from_string('''
         <html>
           <head>
@@ -81,6 +116,16 @@ def test():
         </html>
     ''')
     print tmpl.render(title=42, href='index.html')
+
+    env = Environment(extensions=[SelectiveHTMLCompress])
+    tmpl = env.from_string('''
+        Normal   <span>  unchanged </span> stuff
+        {% strip %}Stripped <span class=foo  >   test   </span>
+        <a href="foo">  test </a> {{ foo }}
+        {% endstrip %}
+        Normal <stuff>   again {{ foo }}  </stuff>
+    ''')
+    print tmpl.render(foo=42)
 
 
 if __name__ == '__main__':
