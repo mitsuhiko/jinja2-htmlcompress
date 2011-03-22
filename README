@@ -1,2 +1,17 @@
-  jinja2-htmlcompress
+
+
+  -- jinja2-htmlcompress
+
     a Jinja2 extension that removes whitespace between HTML tags.
+
+    Example usage:
+
+      env = Environment(extensions=['jinja2htmlcompress.HTMLCompress'],
+                        autoescape=True)
+
+    How does it work?  It throws away all whitespace between HTML tags
+    it can find at runtime.  It will however preserve pre, textarea, style
+    and script tags because this kinda makes sense.  In order to force
+    whitespace you can use '{{ " " }}'.
+
+
