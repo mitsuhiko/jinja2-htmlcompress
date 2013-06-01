@@ -94,7 +94,7 @@ class HTMLCompress(Extension):
             if not self.is_isolated(ctx.stack):
                 if not re.match(r'.+\w\s$', value):
                     value = value.strip()
-                value = _ws_normalize_re.sub(' ', value.strip())
+                value = _ws_normalize_re.sub(' ', value)
             buffer.append(value)
 
         for match in _tag_re.finditer(ctx.token.value):
