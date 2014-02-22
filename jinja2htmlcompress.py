@@ -40,13 +40,13 @@ def _make_dict_from_listing(listing):
 
 
 class HTMLCompress(Extension):
-    isolated_elements = set(['script', 'style', 'noscript', 'textarea'])
+    isolated_elements = set(['script', 'style', 'noscript', 'textarea', 'pre'])
     void_elements = set(['br', 'img', 'area', 'hr', 'param', 'input',
                          'embed', 'col'])
     block_elements = set(['div', 'p', 'form', 'ul', 'ol', 'li', 'table', 'tr',
                           'tbody', 'thead', 'tfoot', 'tr', 'td', 'th', 'dl',
                           'dt', 'dd', 'blockquote', 'h1', 'h2', 'h3', 'h4',
-                          'h5', 'h6', 'pre'])
+                          'h5', 'h6'])
     breaking_rules = _make_dict_from_listing([
         (['p'], set(['#block'])),
         (['li'], set(['li'])),
@@ -164,6 +164,10 @@ def test():
             }
           </script>
           <body>
+            <pre>
+                Preformatted text
+                    Indented
+            </pre>
             <li><a href="{{ href }}">{{ title }}</a><br>Test   Foo
             <li><a href="{{ href }}">{{ title }}</a><img src=test.png>
           </body>
