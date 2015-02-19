@@ -10,6 +10,7 @@
     :license: BSD, see LICENSE for more details.
 """
 import re
+import six
 from jinja2.ext import Extension
 from jinja2.lexer import Token, describe_token
 from jinja2 import TemplateSyntaxError
@@ -40,20 +41,23 @@ def _make_dict_from_listing(listing):
 
 
 class HTMLCompress(Extension):
-    isolated_elements = set(['script', 'style', 'noscript', 'textarea'])
-    void_elements = set(['br', 'img', 'area', 'hr', 'param', 'input',
-                         'embed', 'col'])
-    block_elements = set(['div', 'p', 'form', 'ul', 'ol', 'li', 'table', 'tr',
-                          'tbody', 'thead', 'tfoot', 'tr', 'td', 'th', 'dl',
-                          'dt', 'dd', 'blockquote', 'h1', 'h2', 'h3', 'h4',
-                          'h5', 'h6', 'pre'])
+    def parse(self, parser):
+        return super().parse(parser)
+
+    isolated_elements = {'script', 'style', 'noscript', 'textarea'}
+    void_elements = {'br', 'img', 'area', 'hr', 'param', 'input', 'embed',
+                     'col'}
+    block_elements = {'div', 'p', 'form', 'ul', 'ol', 'li', 'table', 'tr',
+                      'tbody', 'thead', 'tfoot', 'tr', 'td', 'th', 'dl', 'dt',
+                      'dd', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                      'pre'}
     breaking_rules = _make_dict_from_listing([
-        (['p'], set(['#block'])),
-        (['li'], set(['li'])),
-        (['td', 'th'], set(['td', 'th', 'tr', 'tbody', 'thead', 'tfoot'])),
-        (['tr'], set(['tr', 'tbody', 'thead', 'tfoot'])),
-        (['thead', 'tbody', 'tfoot'], set(['thead', 'tbody', 'tfoot'])),
-        (['dd', 'dt'], set(['dl', 'dt', 'dd']))
+        (['p'], {'#block'}),
+        (['li'], {'li'}),
+        (['td', 'th'], {'td', 'th', 'tr', 'tbody', 'thead', 'tfoot'}),
+        (['tr'], {'tr', 'tbody', 'thead', 'tfoot'}),
+        (['thead', 'tbody', 'tfoot'], {'thead', 'tbody', 'tfoot'}),
+        (['dd', 'dt'], {'dl', 'dt', 'dd'})
     ])
 
     def is_isolated(self, stack):
@@ -65,7 +69,7 @@ class HTMLCompress(Extension):
     def is_breaking(self, tag, other_tag):
         breaking = self.breaking_rules.get(other_tag)
         return breaking and (tag in breaking or
-            ('#block' in breaking and tag in self.block_elements))
+                             ('#block' in breaking and tag in self.block_elements))
 
     def enter_tag(self, tag, ctx):
         while ctx.stack and self.is_breaking(tag, ctx.stack[-1]):
@@ -82,7 +86,7 @@ class HTMLCompress(Extension):
             return
         for idx, other_tag in enumerate(reversed(ctx.stack)):
             if other_tag == tag:
-                for num in xrange(idx + 1):
+                for num in range(idx + 1):
                     ctx.stack.pop()
             elif not self.breaking_rules.get(other_tag):
                 break
@@ -90,6 +94,7 @@ class HTMLCompress(Extension):
     def normalize(self, ctx):
         pos = 0
         buffer = []
+
         def write_data(value):
             if not self.is_isolated(ctx.stack):
                 value = _ws_normalize_re.sub(' ', value.strip())
@@ -128,7 +133,7 @@ class SelectiveHTMLCompress(HTMLCompress):
         while 1:
             if stream.current.type == 'block_begin':
                 if stream.look().test('name:strip') or \
-                   stream.look().test('name:endstrip'):
+                        stream.look().test('name:endstrip'):
                     stream.skip()
                     if stream.current.value == 'strip':
                         strip_depth += 1
@@ -147,7 +152,7 @@ class SelectiveHTMLCompress(HTMLCompress):
                 yield Token(stream.current.lineno, 'data', value)
             else:
                 yield stream.current
-            stream.next()
+            six.next(stream)
 
 
 def test():
@@ -169,7 +174,7 @@ def test():
           </body>
         </html>
     ''')
-    print tmpl.render(title=42, href='index.html')
+    six.print_(tmpl.render(title=42, href='index.html'))
 
     env = Environment(extensions=[SelectiveHTMLCompress])
     tmpl = env.from_string('''
@@ -185,7 +190,7 @@ def test():
         </p>
         {% endstrip %}
     ''')
-    print tmpl.render(foo=42)
+    six.print_(tmpl.render(foo=42))
 
 
 if __name__ == '__main__':
