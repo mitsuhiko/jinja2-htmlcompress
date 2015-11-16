@@ -92,7 +92,7 @@ class HTMLCompress(Extension):
         buffer = []
         def write_data(value):
             if not self.is_isolated(ctx.stack):
-                if value[-2:] == "  ":
+                if value[-2:] == "  " or value[-1:] == "\n":
                     value = value.strip()
                 value = _ws_normalize_re.sub(' ', value)
             buffer.append(value)
