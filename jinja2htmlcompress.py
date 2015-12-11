@@ -92,7 +92,9 @@ class HTMLCompress(Extension):
         buffer = []
         def write_data(value):
             if not self.is_isolated(ctx.stack):
-                value = _ws_normalize_re.sub(' ', value.strip())
+                if value[-2:] == "  " or value[-1:] == "\n":
+                    value = value.strip()
+                value = _ws_normalize_re.sub(' ', value)
             buffer.append(value)
 
         for match in _tag_re.finditer(ctx.token.value):
@@ -164,8 +166,9 @@ def test():
             }
           </script>
           <body>
-            <li><a href="{{ href }}">{{ title }}</a><br>Test   Foo
+            <li><a href="{{ href }}">{{ title }}</a> <br>Test   Foo
             <li><a href="{{ href }}">{{ title }}</a><img src=test.png>
+            <li>save <a href="#">the</a> link</li>
           </body>
         </html>
     ''')
