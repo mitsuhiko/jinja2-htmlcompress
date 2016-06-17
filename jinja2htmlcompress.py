@@ -83,7 +83,12 @@ class HTMLCompress(Extension):
             return
         for idx, other_tag in enumerate(reversed(ctx.stack)):
             if other_tag == tag:
-                for num in xrange(idx + 1):
+                try:
+                    # xrange is redundant in Python 3; range is the same as it
+                    iterator = xrange(idx + 1)
+                except NameError:
+                    iterator = range(idx + 1)
+                for num in iterator:
                     ctx.stack.pop()
             elif not self.breaking_rules.get(other_tag):
                 break
