@@ -9,6 +9,7 @@
     :copyright: (c) 2011 by Armin Ronacher.
     :license: BSD, see LICENSE for more details.
 """
+from __future__ import print_function
 import re
 from jinja2.ext import Extension
 from jinja2.lexer import Token, describe_token
@@ -82,7 +83,12 @@ class HTMLCompress(Extension):
             return
         for idx, other_tag in enumerate(reversed(ctx.stack)):
             if other_tag == tag:
-                for num in xrange(idx + 1):
+                try:
+                    # xrange is redundant in Python 3; range is the same as it
+                    iterator = xrange(idx + 1)
+                except NameError:
+                    iterator = range(idx + 1)
+                for num in iterator:
                     ctx.stack.pop()
             elif not self.breaking_rules.get(other_tag):
                 break
@@ -147,7 +153,7 @@ class SelectiveHTMLCompress(HTMLCompress):
                 yield Token(stream.current.lineno, 'data', value)
             else:
                 yield stream.current
-            stream.next()
+            next(stream)
 
 
 def test():
@@ -169,7 +175,7 @@ def test():
           </body>
         </html>
     ''')
-    print tmpl.render(title=42, href='index.html')
+    print(tmpl.render(title=42, href='index.html'))
 
     env = Environment(extensions=[SelectiveHTMLCompress])
     tmpl = env.from_string('''
@@ -185,7 +191,7 @@ def test():
         </p>
         {% endstrip %}
     ''')
-    print tmpl.render(foo=42)
+    print(tmpl.render(foo=42))
 
 
 if __name__ == '__main__':
