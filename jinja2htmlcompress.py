@@ -9,10 +9,18 @@
     :copyright: (c) 2011 by Armin Ronacher.
     :license: BSD, see LICENSE for more details.
 """
+from __future__ import absolute_import, division, print_function
 import re
+import sys
+
+PY2 = sys.version_info < (3,0)
+irange = xrange if PY2 else range
+assert next  # fail early under pre-py26
+
 from jinja2.ext import Extension
 from jinja2.lexer import Token, describe_token
 from jinja2 import TemplateSyntaxError
+
 
 
 _tag_re = re.compile(r'(?:<(/?)([a-zA-Z0-9_-]+)\s*|(>\s*))(?s)')
@@ -82,7 +90,7 @@ class HTMLCompress(Extension):
             return
         for idx, other_tag in enumerate(reversed(ctx.stack)):
             if other_tag == tag:
-                for num in xrange(idx + 1):
+                for num in irange(idx + 1):
                     ctx.stack.pop()
             elif not self.breaking_rules.get(other_tag):
                 break
@@ -147,7 +155,7 @@ class SelectiveHTMLCompress(HTMLCompress):
                 yield Token(stream.current.lineno, 'data', value)
             else:
                 yield stream.current
-            stream.next()
+            next(stream)
 
 
 def test():
@@ -169,7 +177,7 @@ def test():
           </body>
         </html>
     ''')
-    print tmpl.render(title=42, href='index.html')
+    print(tmpl.render(title=42, href='index.html'))
 
     env = Environment(extensions=[SelectiveHTMLCompress])
     tmpl = env.from_string('''
@@ -185,7 +193,7 @@ def test():
         </p>
         {% endstrip %}
     ''')
-    print tmpl.render(foo=42)
+    print(tmpl.render(foo=42))
 
 
 if __name__ == '__main__':
