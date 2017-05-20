@@ -12,6 +12,7 @@
 from __future__ import print_function
 import re
 import sys
+import os
 
 PY2 = sys.version_info < (3,0)
 irange = xrange if PY2 else range
@@ -46,6 +47,9 @@ def _make_dict_from_listing(listing):
             rv[key] = value
     return rv
 
+#: policy key controlling whether this defaults to active globally
+DEFAULT_ACTIVE_KEY = "htmlcompress.default_active"
+
 
 class HTMLCompress(Extension):
     """Compression always on"""
@@ -65,6 +69,18 @@ class HTMLCompress(Extension):
         (['thead', 'tbody', 'tfoot'], set(['thead', 'tbody', 'tfoot'])),
         (['dd', 'dt'], set(['dl', 'dt', 'dd']))
     ])
+
+    #: whether class should default to active (override by policy)
+    default_active = True
+
+    def get_policy_key(self, key, default=None):
+        # NOTE: policy dict not added until jinja 2.9
+        policies = getattr(self.environment, "policies", None) or {}
+        return policies.get(key, default)
+
+    def active_for_stream(self, stream):
+        # TODO: check stream.filename, and only activate for certain exts, ala autoescape.
+        return self.get_policy_key(DEFAULT_ACTIVE_KEY, self.default_active)
 
     def is_isolated(self, stack):
         for tag in reversed(stack):
@@ -124,48 +140,76 @@ class HTMLCompress(Extension):
 
     def filter_stream(self, stream):
         ctx = StreamProcessContext(stream)
-        for token in stream:
-            if token.type != 'data':
-                yield token
-                continue
-            ctx.token = token
-            value = self.normalize(ctx)
-            yield Token(token.lineno, 'data', value)
+        stack = []
+        active = default_active = self.active_for_stream(stream)
 
+        def consume_block_end():
+            if stream.current.type == 'block_end':
+                stream.skip()
+            else:
+                ctx.fail('expected end of block, got %s' %
+                         describe_token(stream.current))
 
-class SelectiveHTMLCompress(HTMLCompress):
-    """Compression off by default; on inside {% strip %} {% endstrip %} tags"""
-
-    def filter_stream(self, stream):
-        ctx = StreamProcessContext(stream)
-        strip_depth = 0
         while 1:
             if stream.current.type == 'block_begin':
-                if stream.look().test('name:strip') or \
-                   stream.look().test('name:endstrip'):
+
+                peek_next = stream.look()
+
+                if peek_next.test('name:strip'):
+                    # {% strip [true|false] %}
                     stream.skip()
-                    if stream.current.value == 'strip':
-                        strip_depth += 1
+                    stream.skip()
+                    if stream.current.test('name:false'):
+                        stream.skip()
+                        enable = False
+                    elif stream.current.test('name:true'):
+                        stream.skip()
+                        enable = True
                     else:
-                        strip_depth -= 1
-                        if strip_depth < 0:
-                            ctx.fail('Unexpected tag endstrip')
+                        # implicit enable
+                        enable = True
+                    consume_block_end()
+                    stack.append(enable)
+                    active = enable
+
+                elif peek_next.test('name:endstrip'):
+                    # {% endstrip %}
+                    if not stack:
+                        ctx.fail('Unexpected tag endstrip')
                     stream.skip()
-                    if stream.current.type != 'block_end':
-                        ctx.fail('expected end of block, got %s' %
-                                 describe_token(stream.current))
                     stream.skip()
-            if strip_depth > 0 and stream.current.type == 'data':
-                ctx.token = stream.current
+                    consume_block_end()
+                    stack.pop()
+                    active = stack[-1] if stack else default_active
+
+            current = stream.current
+            if active and current.type == 'data':
+                ctx.token = current
                 value = self.normalize(ctx)
-                yield Token(stream.current.lineno, 'data', value)
+                yield Token(current.lineno, 'data', value)
             else:
-                yield stream.current
+                yield current
+
             next(stream)
 
 
+# XXX: deprecate in favor of HTMLCompress + setting policy['htmlcompress.default_active'] = False?
+class SelectiveHTMLCompress(HTMLCompress):
+    """Compression off by default; on inside {% strip %} {% endstrip %} tags"""
+
+    default_active = False
+
+
+# deprecated
 class InvertedSelectiveHTMLCompress(HTMLCompress):
-    """Compression on by default; off inside {% unstrip %} {% endunstrip %} tags"""
+    """
+    Compression on by default; off inside {% unstrip %} {% endunstrip %} tags
+    
+    .. deprecated::
+        
+        In favor of "{% strip false %}...{% endstrip %}", 
+        as supported by base HTMLCompress.
+    """
 
     def filter_stream(self, stream):
         ctx = StreamProcessContext(stream)

@@ -31,7 +31,7 @@ Topic :: Software Development :: Libraries
 setup(
     # metadata
     name="jinja2htmlcompress",
-    version="1.0",
+    version="1.1",
 
     author="Armin Ronacher",
     author_email="armin.ronacher@active-4.com",

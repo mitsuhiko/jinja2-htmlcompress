@@ -16,11 +16,17 @@
     Unlike filters that work at template runtime, this remotes whitespace
     at compile time and does not add an overhead in template execution.
 
-    What if you only want to selective strip stuff?
+    What if you only want to selectively strip stuff?
+
+    You can use ``{% strip false %} ... {% endstrip %}`` blocks to temporarily disable
+    stripping for a block; and/or use ``{% strip true %} ... {% enstrip %}`` blocks to enable it
+    (the last can be shortened to ``{% strip %}...{% endstrip %}``).
+
+    By default, stripping is turned on globally.  To disable it,
+    you can either use:
 
       env = Environment(extensions=['jinja2htmlcompress.SelectiveHTMLCompress'])
 
-    And then mark blocks with ``{% strip %}``:
+    or for jinja 2.9, you can keep using ``HTMLCompress``, and set the policy flag:
 
-      {% strip %} ... {% endstrip %}
-
+      env.policies['htmlcompress.default_active'] = False
