@@ -9,7 +9,7 @@
     :copyright: (c) 2011 by Armin Ronacher.
     :license: BSD, see LICENSE for more details.
 """
-from __future__ import absolute_import, division, print_function
+from __future__ import print_function
 import re
 import sys
 
@@ -48,6 +48,8 @@ def _make_dict_from_listing(listing):
 
 
 class HTMLCompress(Extension):
+    """Compression always on"""
+
     isolated_elements = set(['script', 'style', 'noscript', 'textarea'])
     void_elements = set(['br', 'img', 'area', 'hr', 'param', 'input',
                          'embed', 'col'])
@@ -100,7 +102,10 @@ class HTMLCompress(Extension):
         buffer = []
         def write_data(value):
             if not self.is_isolated(ctx.stack):
-                value = _ws_normalize_re.sub(' ', value.strip())
+                if not re.match(r'.+\w\s$', value):
+                    if value[-2:] == "  ":
+                        value = value.strip()
+                value = _ws_normalize_re.sub(' ', value)
             buffer.append(value)
 
         for match in _tag_re.finditer(ctx.token.value):
@@ -129,6 +134,7 @@ class HTMLCompress(Extension):
 
 
 class SelectiveHTMLCompress(HTMLCompress):
+    """Compression off by default; on inside {% strip %} {% endstrip %} tags"""
 
     def filter_stream(self, stream):
         ctx = StreamProcessContext(stream)
@@ -158,6 +164,37 @@ class SelectiveHTMLCompress(HTMLCompress):
             next(stream)
 
 
+class InvertedSelectiveHTMLCompress(HTMLCompress):
+    """Compression on by default; off inside {% unstrip %} {% endunstrip %} tags"""
+
+    def filter_stream(self, stream):
+        ctx = StreamProcessContext(stream)
+        unstrip_depth = 0
+        while 1:
+            if stream.current.type == 'block_begin':
+                if stream.look().test('name:unstrip') or \
+                   stream.look().test('name:endunstrip'):
+                    stream.skip()
+                    if stream.current.value == 'unstrip':
+                        unstrip_depth += 1
+                    else:
+                        unstrip_depth -= 1
+                        if unstrip_depth < 0:
+                            ctx.fail('Unexpected tag endunstrip')
+                    stream.skip()
+                    if stream.current.type != 'block_end':
+                        ctx.fail('expected end of block, got %s' %
+                                 describe_token(stream.current))
+                    stream.skip()
+            if unstrip_depth == 0 and stream.current.type == 'data':
+                ctx.token = stream.current
+                value = self.normalize(ctx)
+                yield Token(stream.current.lineno, 'data', value)
+            else:
+                yield stream.current
+            next(stream)
+
+
 def test():
     from jinja2 import Environment
     env = Environment(extensions=[HTMLCompress])
@@ -177,11 +214,13 @@ def test():
           </body>
         </html>
     ''')
+    print("-" * 30, "HTMLCompress")
     print(tmpl.render(title=42, href='index.html'))
+
 
     env = Environment(extensions=[SelectiveHTMLCompress])
     tmpl = env.from_string('''
-        Normal   <span>  unchanged </span> stuff
+        Normal   <span>    unchanged </span>   stuff
         {% strip %}Stripped <span class=foo  >   test   </span>
         <a href="foo">  test </a> {{ foo }}
         Normal <stuff>   again {{ foo }}  </stuff>
@@ -193,6 +232,27 @@ def test():
         </p>
         {% endstrip %}
     ''')
+    print("-" * 30, "SelectiveHTMLCompress")
+    print(tmpl.render(foo=42))
+    
+
+    env = Environment(extensions=[InvertedSelectiveHTMLCompress])
+    tmpl = env.from_string('''
+        {% unstrip %}
+        Normal   <span>    unchanged </span>   stuff
+        {% endunstrip %}
+
+        Stripped <span class=foo  >   test   </span>
+        <a href="foo">  test </a> {{ foo }}
+        Normal <stuff>   again {{ foo }}  </stuff>
+        <p>
+          Foo<br>Bar
+          Baz
+        <p>
+          Moep    <span>Test</span>    Moep
+        </p>
+    ''')
+    print("-" * 30, "InvertedSelectiveHTMLCompress")
     print(tmpl.render(foo=42))
 
 
