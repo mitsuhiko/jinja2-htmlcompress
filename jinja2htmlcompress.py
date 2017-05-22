@@ -144,13 +144,6 @@ class HTMLCompress(Extension):
         stack = []
         active = default_active = self.active_for_stream(stream)
 
-        def consume_block_end():
-            if stream.current.type == 'block_end':
-                stream.skip()
-            else:
-                ctx.fail('expected end of block, got %s' %
-                         describe_token(stream.current))
-
         while 1:
             if stream.current.type == 'block_begin':
 
@@ -158,18 +151,15 @@ class HTMLCompress(Extension):
 
                 if peek_next.test('name:strip'):
                     # {% strip [true|false] %}
-                    stream.skip()
-                    stream.skip()
-                    if stream.current.test('name:false'):
-                        stream.skip()
+                    stream.skip(2)
+                    if stream.skip_if('name:false'):
                         enable = False
-                    elif stream.current.test('name:true'):
-                        stream.skip()
+                    elif stream.skip_if('name:true'):
                         enable = True
                     else:
                         # implicit enable
                         enable = True
-                    consume_block_end()
+                    stream.expect("block_end")
                     stack.append(enable)
                     active = enable
 
@@ -177,18 +167,16 @@ class HTMLCompress(Extension):
                     # {% endstrip %}
                     if not (stack and stack[-1] is not None):
                         ctx.fail('Unexpected tag endstrip')
-                    stream.skip()
-                    stream.skip()
-                    consume_block_end()
+                    stream.skip(2)
+                    stream.expect("block_end")
                     stack.pop()
                     active = stack[-1] if stack else default_active
 
                 elif stream.look().test('name:unstrip'):
                     # {% unstrip %}
                     warn("`{% unstrip %}` blocks are deprecated, use `{% strip false %}` instead", DeprecationWarning)
-                    stream.skip()
-                    stream.skip()
-                    consume_block_end()
+                    stream.skip(2)
+                    stream.expect("block_end")
                     stack.append(None)
                     active = None
 
@@ -196,9 +184,8 @@ class HTMLCompress(Extension):
                     # {% endunstrip %}
                     if not (stack and stack[-1] is None):
                         ctx.fail('Unexpected tag endunstrip')
-                    stream.skip()
-                    stream.skip()
-                    consume_block_end()
+                    stream.skip(2)
+                    stream.expect("block_end")
                     stack.pop()
                     active = stack[-1] if stack else default_active
 
