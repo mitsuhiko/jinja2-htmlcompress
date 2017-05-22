@@ -23,18 +23,28 @@ from jinja2.ext import Extension
 from jinja2.lexer import Token, describe_token
 from jinja2 import TemplateSyntaxError
 
+#: regex used to find tag heads ("<tag" or "</tag") and tag tails (">")
+_tag_re = re.compile(r'''
+    (?:
+        <
+        (?P<closes>/?)
+        (?P<tag>[a-zA-Z0-9_-]+)
+        \s*
+        |
+        (?P<tail>>\s*)
+    )
+    ''', re.X | re.S | re.U)
 
-
-_tag_re = re.compile(r'(?:<(/?)([a-zA-Z0-9_-]+)\s*|(>\s*))(?s)')
-_ws_normalize_re = re.compile(r'[ \t\r\n]+')
+#: regex used to normalize all whitespace
+_ws_normalize_re = re.compile(r'\s+', re.U)
 
 
 class StreamProcessContext(object):
 
     def __init__(self, stream):
-        self.stream = stream
-        self.token = None
-        self.stack = []
+        self.stream = stream  # reference to TokenStream
+        self.token = None  # current data token we're parsing html for
+        self.stack = []  # stack of html tags we're within
 
     def fail(self, message):
         raise TemplateSyntaxError(message, self.token.lineno,
@@ -58,7 +68,9 @@ LAST_CHILD = "#last-child"
 
 
 class HTMLCompress(Extension):
-    """Compression always on"""
+    """
+    Compression always on
+    """
 
     # NOTE: All of the following taken from HTML5 spec,
     #       mainly the element types & optional tags sections:
@@ -136,15 +148,24 @@ class HTMLCompress(Extension):
     default_active = True
 
     def get_policy_key(self, key, default=None):
+        """
+        helper to read key from policies dict.
+        """
         # NOTE: policy dict not added until jinja 2.9
         policies = getattr(self.environment, "policies", None) or {}
         return policies.get(key, default)
 
     def active_for_stream(self, stream):
+        """
+        test if stripping should be enabled by default for specified template
+        """
         # TODO: check stream.filename, and only activate for certain exts, ala autoescape.
         return self.get_policy_key(DEFAULT_ACTIVE_KEY, self.default_active)
 
     def is_isolated(self, stack):
+        """
+        test if stripping should be suppressed because we're in a whitespace-critical element.
+        """
         for tag in reversed(stack):
             if tag in self.isolated_elements:
                 return True
@@ -205,6 +226,12 @@ class HTMLCompress(Extension):
         ctx.fail('Tried to leave %r tag, but something closed it already' % tag)
 
     def normalize(self, ctx):
+        """
+        given ctx.token set to a data token, parse & strip whitespace
+        from it's contents using html-aware parser.
+        """
+        # TODO: this doesn't handle html comments & CDATA, so tags w/in these blocks may confuse it.
+        # TODO: handle implicit start tags (e.g. colgroup)
         pos = 0
         buffer = []
         def write_data(value):
@@ -216,11 +243,12 @@ class HTMLCompress(Extension):
             buffer.append(value)
 
         for match in _tag_re.finditer(ctx.token.value):
-            closes, tag, sole = match.groups()
+            closes, tag, tail = match.group("closes", "tag", "tail")
             preamble = ctx.token.value[pos:match.start()]
             write_data(preamble)
-            if sole:
-                write_data(sole)
+            if tail:
+                assert not (closes or tag)
+                write_data(tail)
             else:
                 buffer.append(match.group())
                 (closes and self.leave_tag or self.enter_tag)(tag, ctx)
@@ -230,6 +258,25 @@ class HTMLCompress(Extension):
         return u''.join(buffer)
 
     def filter_stream(self, stream):
+        """
+        filter template token stream -- 
+        recognizes & removes ``{% strip %}`` and related tags,
+        and strips whitespace from data tokens per current 'strip' state.
+        """
+
+        # FIXME: Current lexer-level approach allows strip blocks to "cross" other blocks...
+        #        e.g. "{% strip %} ... {% if %} ... {% endstrip %} ... {% endif %}".
+        #        a parser-level approach would fix this; any existing usages of that type
+        #        may throw an error in the future.
+        #
+        #        Additionally, the current html psuedo-parser approach may fail to parse
+        #        the tag hierarchy correctly in cases such as duplicate open tags,
+        #        e.g. "{% if ... %} <a> ... {% else } <a> ... {% endif %} ... </a>",
+        #        or strip tags that cross tag hierarchy boundaries,
+        #        e.g. "<a> ... {% strip %} ... </a> ... {% endstrip %}"
+        #
+        #        At a minimum, this code should try to detect & warn user about these cases.
+
         ctx = StreamProcessContext(stream)
         stack = []
         active = default_active = self.active_for_stream(stream)
