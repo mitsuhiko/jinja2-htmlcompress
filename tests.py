@@ -119,6 +119,10 @@ class HTMLCompressTest(BaseCompressorTest):
         self.assertEqual(self.render('''<span> foo <DIV> bar </DIV> baz </span>'''),
                          '''<span>foo<DIV>bar</DIV>baz</span>''')
 
+    def test_self_closed(self):
+        self.assertEqual(self.render(''' <div> foo <br/> bar </div> '''),
+                         '''<div>foo<br/>bar</div>''')
+
     def test_nested(self):
         result = self.render('''
     {% strip %}

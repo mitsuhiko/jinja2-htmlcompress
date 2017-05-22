@@ -76,14 +76,16 @@ class StreamProcessContext(object):
     void_elements = set("area base br col embed hr img input link "
                         "meta param source track wbr".split())
 
-    #: set of tags that are block elements, and will always break inline text flow
-    #: TODO: find canonical source in HTML5 spec; this list pulled from
-    #:       https://developer.mozilla.org/en-US/docs/Web/HTML/Block-level_elements
-    #:       with addition of the table-related tags, HTML, HEAD, TITLE, and SCRIPT
-    block_elements = set("address article aside blockquote body canvas dd div dl dt fieldset "
-                         "figcaption figure footer form h1 h2 h3 h4 h5 h6 head header hgroup hr "
-                         "html li main nav noscript ol output p pre section script "
-                         "table thead title tbody tfoot tr td th ul video".split())
+    #: set of tags that don't need ANY whitespace around them preserved.
+    #: this includes all the block elements on
+    #:      https://developer.mozilla.org/en-US/docs/Web/HTML/Block-level_elements
+    #: plus table-related tags, HTML, HEAD, TITLE, and SCRIPT
+    spaceless_elements = set(
+        "address article aside blockquote body canvas dd div dl dt fieldset "
+        "figcaption figure footer form h1 h2 h3 h4 h5 h6 head header hgroup hr "
+        "html li main nav noscript ol output p pre section script "
+        "table thead title tbody tfoot tr td th ul video".split())
+    spaceless_elements |= void_elements
 
     #: dict of tags that can be implicitly closed; maps tag -> set of following tags
     #: that are allowed to implicitly close it.  special value "#last-child" means
@@ -241,7 +243,7 @@ class StreamProcessContext(object):
                     # For inline tags, we want to preserve 1 space after closing tag marker.
                     # For all other cases, can strip trailing space.
                     content = match.group()
-                    if not self.last_closed or self.last_tag in self.block_elements:
+                    if not self.last_closed or self.last_tag in self.spaceless_elements:
                         content = content.rstrip()
                     yield compress_spaces(" ", preamble + content)
                 else:
@@ -260,7 +262,7 @@ class StreamProcessContext(object):
 
                     # For inline tags, we want to preserve at least one space before their opening
                     # marker.  For all other cases, can strip trailing space from preamble.
-                    if closes or tag in self.block_elements:
+                    if closes or tag in self.spaceless_elements:
                         preamble = preamble.rstrip()
 
                     # if content ends with a space, we want to let tail end code handle it...
