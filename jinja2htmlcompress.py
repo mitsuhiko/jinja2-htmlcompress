@@ -13,6 +13,7 @@ from __future__ import print_function
 import re
 import sys
 import os
+from warnings import warn
 
 PY2 = sys.version_info < (3,0)
 irange = xrange if PY2 else range
@@ -174,8 +175,27 @@ class HTMLCompress(Extension):
 
                 elif peek_next.test('name:endstrip'):
                     # {% endstrip %}
-                    if not stack:
+                    if not (stack and stack[-1] is not None):
                         ctx.fail('Unexpected tag endstrip')
+                    stream.skip()
+                    stream.skip()
+                    consume_block_end()
+                    stack.pop()
+                    active = stack[-1] if stack else default_active
+
+                elif stream.look().test('name:unstrip'):
+                    # {% unstrip %}
+                    warn("`{% unstrip %}` blocks are deprecated, use `{% strip false %}` instead", DeprecationWarning)
+                    stream.skip()
+                    stream.skip()
+                    consume_block_end()
+                    stack.append(None)
+                    active = None
+
+                elif stream.look().test('name:endunstrip'):
+                    # {% endunstrip %}
+                    if not (stack and stack[-1] is None):
+                        ctx.fail('Unexpected tag endunstrip')
                     stream.skip()
                     stream.skip()
                     consume_block_end()
@@ -199,41 +219,5 @@ class SelectiveHTMLCompress(HTMLCompress):
 
     default_active = False
 
-
-# deprecated
-class InvertedSelectiveHTMLCompress(HTMLCompress):
-    """
-    Compression on by default; off inside {% unstrip %} {% endunstrip %} tags
-    
-    .. deprecated::
-        
-        In favor of "{% strip false %}...{% endstrip %}", 
-        as supported by base HTMLCompress.
-    """
-
-    def filter_stream(self, stream):
-        ctx = StreamProcessContext(stream)
-        unstrip_depth = 0
-        while 1:
-            if stream.current.type == 'block_begin':
-                if stream.look().test('name:unstrip') or \
-                   stream.look().test('name:endunstrip'):
-                    stream.skip()
-                    if stream.current.value == 'unstrip':
-                        unstrip_depth += 1
-                    else:
-                        unstrip_depth -= 1
-                        if unstrip_depth < 0:
-                            ctx.fail('Unexpected tag endunstrip')
-                    stream.skip()
-                    if stream.current.type != 'block_end':
-                        ctx.fail('expected end of block, got %s' %
-                                 describe_token(stream.current))
-                    stream.skip()
-            if unstrip_depth == 0 and stream.current.type == 'data':
-                ctx.token = stream.current
-                value = self.normalize(ctx)
-                yield Token(stream.current.lineno, 'data', value)
-            else:
-                yield stream.current
-            next(stream)
+# deprecated alias
+InvertedSelectiveHTMLCompress = HTMLCompress
