@@ -102,8 +102,8 @@ class HTMLCompressTest(BaseCompressorTest):
         {% endstrip %}   </span>
 {% endstrip %}
 ''')
-        self.assertEqual(result, ''' <span>foo
-        <span>   bar   <span>baz</span>   </span>
+        self.assertEqual(result, ''' <span>foo \n\
+        <span>   bar   <span>baz</span>    </span>
 ''')
 
     def test_leading_space(self):
@@ -114,8 +114,8 @@ class HTMLCompressTest(BaseCompressorTest):
 
     def test_internal_space(self):
         # issue 8
-        result = self.render('''<th class="{%if 1%}firstcol {% endif %} cell_style">''')
-        self.assertEqual(result, '''<th class="firstcol cell_style">''')
+        result = self.render('''<th class="{%if 1%}firstcol  {% endif %}  cell_style">''')
+        self.assertEqual(result, '''<th class="firstcol  cell_style">''')
 
 class SelectiveHTMLCompressTest(BaseCompressorTest):
 
@@ -176,5 +176,5 @@ class InvertedHTMLCompressTest(BaseCompressorTest):
 
         self.assertEqual(result, ''' \n\
         Normal   <span>    unchanged </span>   stuff
-         Stripped <span class=foo>test</span> <a href="foo">test</a> 42 Normal <stuff>again 42</stuff> \
+        Stripped <span class=foo>test</span> <a href="foo">test</a> 42 Normal <stuff>again 42</stuff> \
 <p>Foo<br>Bar Baz<p>Moep <span>Test</span> Moep</p>''')

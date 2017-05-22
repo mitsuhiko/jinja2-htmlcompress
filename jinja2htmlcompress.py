@@ -213,7 +213,7 @@ class StreamProcessContext(object):
         # <tag> not found in stack
         self.fail('Tried to leave %r tag, but something closed it already' % tag)
 
-    def _feed(self, source):
+    def _feed(self, source, strip_leading_space=False):
         """
         helper for normalize() -- takes in source string,
         parses into chunks, advances tag stack, and yields space-compressed chunks.
@@ -254,7 +254,7 @@ class StreamProcessContext(object):
                     # Can strip leading whitespace if followed a tag marker,
                     # but if it's at start of source, we can't know if it's needed
                     preamble = source[pos:match.start()]
-                    if pos:
+                    if pos or strip_leading_space:
                         preamble = preamble.lstrip()
 
                     # For inline tags, we want to preserve at least one space before their opening
@@ -283,13 +283,13 @@ class StreamProcessContext(object):
             content = compress_spaces(" ", content)
         yield content
 
-    def normalize(self, token):
+    def normalize(self, token, **kwds):
         """
         given data token, parse & strip whitespace
         from it's contents using html-aware parser.
         """
         self.token = token
-        return u''.join(self._feed(token.value))
+        return u''.join(self._feed(token.value, **kwds))
 
 
 class HTMLCompress(Extension):
@@ -338,9 +338,12 @@ class HTMLCompress(Extension):
         ctx = StreamProcessContext(self, stream)
         stack = []
         active = default_active = self.active_for_stream(stream)
-        last = None
+
+        #: flag if last token was recognized as not requiring normalize() to preserve leading spaces
+        strip_leading_space = stream.skip_if("initial")
 
         while 1:
+
             if stream.current.type == 'block_begin':
 
                 peek_next = stream.look()
@@ -387,11 +390,19 @@ class HTMLCompress(Extension):
                     active = stack[-1] if stack else default_active
 
             current = stream.current
-            if active and current.type == 'data':
-                value = ctx.normalize(current)
-                yield Token(current.lineno, 'data', value)
+            if current.type == "data":
+                if active:
+                    value = ctx.normalize(current, strip_leading_space=strip_leading_space)
+                    yield Token(current.lineno, 'data', value)
+                else:
+                    yield current
+                    value = current.value
+                strip_leading_space = (value and value[-1].isspace())
             else:
                 yield current
+                # XXX: would be easier at parser level, could skip over comment nodes;
+                #      handle if/thens better, etc.
+                strip_leading_space = False
 
             next(stream)
 
