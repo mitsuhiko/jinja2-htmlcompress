@@ -41,35 +41,96 @@ class StreamProcessContext(object):
                                   self.stream.name, self.stream.filename)
 
 
-def _make_dict_from_listing(listing):
-    rv = {}
-    for keys, value in listing:
-        for key in keys:
-            rv[key] = value
-    return rv
+def _compile_implicit_close_map(source):
+    result = {}
+    for keys, value in source.items():
+        value = set(value.split())
+        for key in keys.split():
+            result[key] = value
+    return result
+
 
 #: policy key controlling whether this defaults to active globally
 DEFAULT_ACTIVE_KEY = "htmlcompress.default_active"
+
+#: special value used by implicit_close_map
+LAST_CHILD = "#last-child"
 
 
 class HTMLCompress(Extension):
     """Compression always on"""
 
-    isolated_elements = set(['script', 'style', 'noscript', 'textarea', 'pre'])
-    void_elements = set(['br', 'img', 'area', 'hr', 'param', 'input',
-                         'embed', 'col'])
-    block_elements = set(['div', 'p', 'form', 'ul', 'ol', 'li', 'table', 'tr',
-                          'tbody', 'thead', 'tfoot', 'tr', 'td', 'th', 'dl',
-                          'dt', 'dd', 'blockquote', 'h1', 'h2', 'h3', 'h4',
-                          'h5', 'h6'])
-    breaking_rules = _make_dict_from_listing([
-        (['p'], set(['#block'])),
-        (['li'], set(['li'])),
-        (['td', 'th'], set(['td', 'th', 'tr', 'tbody', 'thead', 'tfoot'])),
-        (['tr'], set(['tr', 'tbody', 'thead', 'tfoot'])),
-        (['thead', 'tbody', 'tfoot'], set(['thead', 'tbody', 'tfoot'])),
-        (['dd', 'dt'], set(['dl', 'dt', 'dd']))
-    ])
+    # NOTE: All of the following taken from HTML5 spec,
+    #       mainly the element types & optional tags sections:
+    #           http://w3c.github.io/html/syntax.html#writing-html-documents-elements
+    #           http://w3c.github.io/html/syntax.html#optional-start-and-end-tags
+    #
+    #       Where noted, additional rules outside of the spec have been added
+    #       in order to making parsing for resilient to odd ordering from template logic.
+
+    #: set of tags whose contents will never be stripped;
+    #: this is set of "raw text" and "escapable raw text" elements from HTML5 sec 8.1.2;
+    #: as well as the PRE element (since whitespace also matters there)
+    isolated_elements = set("script style textarea title pre".split())
+
+    #: set of void (self-closing) elements; per HTML5 sec 8.1.2
+    void_elements = set("area base br col embed hr img input link "
+                        "meta param source track wbr".split())
+
+    # #: set of tags that are block elements, and will always break inline text flow
+    # #: TODO: find canonical source in HTML5 spec
+    # block_elements = set("blockquote dd div dl dt form h1 h2 h3 h4 h5 h6 "
+    #                      "li ol p pre table tbody td tfoot th thead tr tr ul".split())
+
+    #: dict of tags that can be implicitly closed; maps tag -> set of following tags
+    #: that are allowed to implicitly close it.  special value "#last-child" means
+    #: tag can be implicitly closed if it's the last child of parent.
+    #: taken from HTML5 sec 8.1.2.4
+    implicit_close_map = _compile_implicit_close_map({
+        # NOTE: for easy of definition, compile helper turns keys with spaces
+        #       into multiple keys, and values treated as space-separated sets.
+
+        "li": "li #last-child",
+
+        # NOTE: "#last-child" not part of spec for DT tag
+        "dt dd": "dt dd #last-child",
+
+        # NOTE: "p" element can also be closed if "#last-child", but has special conditions
+        #       that are encoded as part of allow_implicit_close_if_last_child()
+        "p": "address article aside blockquote details div dl fieldset figcaption "
+             "figure footer form h1 h2 h3 h4 h5 h6 header hr main menu nav ol "
+             "p pre section table ul",
+
+        "rt rp": "rt rp,#last-child",
+
+        "option": "option optgroup #last-child",
+        "optgroup": "optgroup #last-child",
+
+        "menuitem": "menuitem hr menu #last-child",
+
+        # TODO: colgroup can autoclose if not followed by space or comment
+        #       For now, working around that by listed all common table elements.
+        #       none of the following values are technically part of spec.
+        "colgroup": "thead tfoot tbody tr th td #last-child",
+
+        # TODO: caption can autoclose if not followed by space or comment
+
+        # NOTE: all the following are part of spec:
+        #       * thead: "#last-child", duplicate THEAD
+        #       * tbody: "thead", duplicate TBODY
+        #       * tfoot: "thead", "tbody", duplicate TFOOT
+        "thead tbody tfoot": "thead tbody tfoot #last-child",
+
+        # NOTE: TBODY, THEAD, TFOOT not part of spec
+        "tr": "tbody thead tfoot tr #last-child",
+
+        # NOTE: TBODY, THEAD, TFOOT not part of spec
+        "th td": "tbody thead tfoot td th #last-child",
+    })
+
+    #: tags don't allow implicit close for "P:last-child"
+    #: taken from HTML5 sec 8.1.2.4
+    p_no_implicit_close_inside_elements = set("a audio del ins map noscript video".split())
 
     #: whether class should default to active (override by policy)
     default_active = True
@@ -89,30 +150,59 @@ class HTMLCompress(Extension):
                 return True
         return False
 
-    def is_breaking(self, tag, other_tag):
-        breaking = self.breaking_rules.get(other_tag)
-        return breaking and (tag in breaking or
-            ('#block' in breaking and tag in self.block_elements))
+    def allow_implicit_close_before(self, tag, next_tag):
+        """
+        test if HTML spec allows <tag> to be implicitly closed
+        when followed by <next_tag>.
+        """
+        following_tags = self.implicit_close_map.get(tag)
+        return following_tags and next_tag in following_tags
+
+    def allow_implicit_close_if_last_child(self, tag, parent_tag):
+        """
+        test if HTML5 spec allows <tag> to implicitly closed 
+        if it's the last element in parent.
+        """
+        if tag == "p":
+            return parent_tag not in self.p_no_implicit_close_inside_elements
+        return self.allow_implicit_close_before(tag, LAST_CHILD)
 
     def enter_tag(self, tag, ctx):
-        while ctx.stack and self.is_breaking(tag, ctx.stack[-1]):
+        """
+        register opening of new tag
+        """
+        # implicitly close all tags that can be implicitly closed when followed by <tag>
+        while ctx.stack and self.allow_implicit_close_before(ctx.stack[-1], tag):
             self.leave_tag(ctx.stack[-1], ctx)
+
+        # if tag isn't self-closing, add it to stack
         if tag not in self.void_elements:
             ctx.stack.append(tag)
 
     def leave_tag(self, tag, ctx):
-        if not ctx.stack:
-            ctx.fail('Tried to leave "%s" but something closed '
-                     'it already' % tag)
-        if tag == ctx.stack[-1]:
-            ctx.stack.pop()
-            return
-        for idx, other_tag in enumerate(reversed(ctx.stack)):
+        """
+        roll back stack to explicitly close <tag>
+        """
+        stack = ctx.stack
+        end = len(stack)
+        while end > 0:
+            end -= 1
+            other_tag = stack[end]
+
+            # found match -- explicitly close this tag, and implicitly close all child tags
             if other_tag == tag:
-                for num in irange(idx + 1):
-                    ctx.stack.pop()
-            elif not self.breaking_rules.get(other_tag):
-                break
+                del stack[end:]
+                return
+
+            # if <other tag> doesn't allow implicit closing, don't bother searching
+            # for <tag> further up hierarchy.  just assume <tag> had implicit end,
+            # or was improperly unclosed, and leave stack unchanged.
+            parent_tag = stack[end-1] if end else None
+            if not self.allow_implicit_close_if_last_child(other_tag, parent_tag):
+                return
+
+        # <tag> not found in stack
+        ctx.fail('Tried to leave %r tag, but something closed it already' % tag)
 
     def normalize(self, ctx):
         pos = 0
