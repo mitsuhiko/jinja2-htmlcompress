@@ -21,6 +21,10 @@ from jinja2htmlcompress import (
     DEFAULT_ACTIVE_KEY as DA_KEY,
 )
 
+def url_for(path):
+    """dummy helper"""
+    return "/" + path
+
 class BaseCompressorTest(ut.TestCase):
 
     maxDiff = None
@@ -84,10 +88,14 @@ class HTMLCompressTest(BaseCompressorTest):
         self.assertEqual(self.render('''<span>  foo  bar  </span>''', policies={DA_KEY: False}),
                          '''<span>  foo  bar  </span>''')
 
+    def test_inline_preserved(self):
+        self.assertEqual(self.render(''' <div>   foo   <span>   bar   </span>   baz  </div>'''),
+                         '''<div>foo <span>bar</span> baz</div>''')
+
     def test_nested(self):
         result = self.render('''
     {% strip %}
-<span>   foo  
+<span>   foo
     {% strip false %}
         <span>   bar   {% strip true %}
                 <span>   baz    </span>
@@ -98,6 +106,16 @@ class HTMLCompressTest(BaseCompressorTest):
         <span>   bar   <span>baz</span>   </span>
 ''')
 
+    def test_leading_space(self):
+        # issue 8
+        result = self.render('''<p>Please   <a href="{{url_for('.login')}}">  login  </a>   to''',
+                             url_for=url_for)
+        self.assertEqual(result, '''<p>Please <a href="/.login">login</a> to''')
+
+    def test_internal_space(self):
+        # issue 8
+        result = self.render('''<th class="{%if 1%}firstcol {% endif %} cell_style">''')
+        self.assertEqual(result, '''<th class="firstcol cell_style">''')
 
 class SelectiveHTMLCompressTest(BaseCompressorTest):
 
@@ -119,8 +137,8 @@ class SelectiveHTMLCompressTest(BaseCompressorTest):
 
         self.assertEqual(result, '''
         Normal   <span>    unchanged </span>   stuff
-        Stripped <span class=foo>test</span><a href="foo">test </a> 42 Normal <stuff>again 42</stuff>\
-<p>Foo<br>Bar Baz<p>Moep<span>Test</span>Moep</p>''')
+        Stripped <span class=foo>test</span> <a href="foo">test</a> 42 Normal <stuff>again 42</stuff> \
+<p>Foo<br>Bar Baz<p>Moep <span>Test</span> Moep</p>''')
 
     def test_policy_unset(self):
         self.assertEqual(self.render('''<span>  foo  bar  </span>'''),
@@ -156,7 +174,7 @@ class InvertedHTMLCompressTest(BaseCompressorTest):
         </p>
     ''', foo=42)
 
-        self.assertEqual(result, '''
+        self.assertEqual(result, ''' \n\
         Normal   <span>    unchanged </span>   stuff
-         Stripped <span class=foo>test</span><a href="foo">test </a> 42 Normal <stuff>again 42</stuff>\
-<p>Foo<br>Bar Baz<p>Moep<span>Test</span>Moep</p>''')
+         Stripped <span class=foo>test</span> <a href="foo">test</a> 42 Normal <stuff>again 42</stuff> \
+<p>Foo<br>Bar Baz<p>Moep <span>Test</span> Moep</p>''')

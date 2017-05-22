@@ -13,8 +13,6 @@ from __future__ import print_function
 import re
 from warnings import warn
 
-PY2 = sys.version_info < (3,0)
-irange = xrange if PY2 else range
 assert next  # fail early under pre-py26
 
 from jinja2.ext import Extension
@@ -27,7 +25,8 @@ _tag_re = re.compile(r'''
         <
         (?P<closes>/?)
         (?P<tag>[a-zA-Z0-9_-]+)
-        \s*
+        # NOTE: important NOT to strip trailing space,
+        #       so it becomes part of preamble of tail porition
         |
         (?P<tail>>\s*)
     )
@@ -77,10 +76,14 @@ class StreamProcessContext(object):
     void_elements = set("area base br col embed hr img input link "
                         "meta param source track wbr".split())
 
-    # #: set of tags that are block elements, and will always break inline text flow
-    # #: TODO: find canonical source in HTML5 spec
-    # block_elements = set("blockquote dd div dl dt form h1 h2 h3 h4 h5 h6 "
-    #                      "li ol p pre table tbody td tfoot th thead tr tr ul".split())
+    #: set of tags that are block elements, and will always break inline text flow
+    #: TODO: find canonical source in HTML5 spec; this list pulled from
+    #:       https://developer.mozilla.org/en-US/docs/Web/HTML/Block-level_elements
+    #:       with addition of the table-related tags, HTML, HEAD, TITLE, and SCRIPT
+    block_elements = set("address article aside blockquote body canvas dd div dl dt fieldset "
+                         "figcaption figure footer form h1 h2 h3 h4 h5 h6 head header hgroup hr "
+                         "html li main nav noscript ol output p pre section script "
+                         "table thead title tbody tfoot tr td th ul video".split())
 
     #: dict of tags that can be implicitly closed; maps tag -> set of following tags
     #: that are allowed to implicitly close it.  special value "#last-child" means
@@ -137,6 +140,9 @@ class StreamProcessContext(object):
         self.stream = stream  # reference to TokenStream
         self.token = None  # current data token we're parsing html for
         self.stack = []  # stack of html tags we're within
+        self.last_tag = None  # set to tag name encountered
+        self.last_closed = False  # if last marker was closing marker
+        self.in_marker = False  # if parsed "<tag" or "</tag>", but not end ">" marker
 
     def fail(self, message, token=None):
         if token is None:
@@ -145,11 +151,12 @@ class StreamProcessContext(object):
         raise TemplateSyntaxError(message, token.lineno,
                                   self.stream.name, self.stream.filename)
 
-    def is_isolated(self):
+    def can_compress(self):
         """
-        test if stripping should be suppressed because we're in a whitespace-critical element.
+        test if stripping should be allowed for current stack state.
+        false if within any tag where whitespace is important (e.g. PRE)
         """
-        return not self.isolated_elements.isdisjoint(self.stack)
+        return self.isolated_elements.isdisjoint(self.stack)
 
     def allow_implicit_close_before(self, tag, next_tag):
         """
@@ -206,39 +213,83 @@ class StreamProcessContext(object):
         # <tag> not found in stack
         self.fail('Tried to leave %r tag, but something closed it already' % tag)
 
+    def _feed(self, source):
+        """
+        helper for normalize() -- takes in source string,
+        parses into chunks, advances tag stack, and yields space-compressed chunks.
+        """
+        # TODO: this doesn't handle html comments & CDATA, so tags w/in these blocks may confuse it.
+        # TODO: handle implicit start tags (e.g. colgroup)
+        pos = 0
+        compress_spaces = _ws_normalize_re.sub
+        can_compress = self.can_compress()
+
+        for match in _tag_re.finditer(source):
+            closes, tag, tail = match.group("closes", "tag", "tail")
+            end = match.end()
+
+            if tail:
+                # found end of tag marker (">") -- content will be attr=value pairs since
+                # start of tag, ">", and optional trailing space.
+                assert not (closes or tag)
+                if can_compress:
+                    # preamble should be all "attr=value" pairs since header of tag marker.
+                    # if it's all spaces, can strip it -- otherwise need to preserve
+                    # leading space between tag & attrs
+                    preamble = source[pos:match.start()].rstrip()
+
+                    # For inline tags, we want to preserve 1 space after closing tag marker.
+                    # For all other cases, can strip trailing space.
+                    content = match.group()
+                    if not self.last_closed or self.last_tag in self.block_elements:
+                        content = content.rstrip()
+                    yield compress_spaces(" ", preamble + content)
+                else:
+                    yield source[pos:end]
+
+            else:
+                # found start of tag marker ("<tag")
+                # preamble should be non-tag content since last marker.
+                if can_compress:
+                    # Can strip leading whitespace if followed a tag marker,
+                    # but if it's at start of source, we can't know if it's needed
+                    preamble = source[pos:match.start()]
+                    if pos:
+                        preamble = preamble.lstrip()
+
+                    # For inline tags, we want to preserve at least one space before their opening
+                    # marker.  For all other cases, can strip trailing space from preamble.
+                    if closes or tag in self.block_elements:
+                        preamble = preamble.rstrip()
+
+                    # if content ends with a space, we want to let tail end code handle it...
+                    # can strip space if there's no attrs in between.
+                    yield compress_spaces(" ", preamble + match.group())
+                else:
+                    yield source[pos:end]
+
+                # update tag stack & related state
+                (closes and self.leave_tag or self.enter_tag)(tag)
+                can_compress = self.can_compress()
+                self.last_closed = closes
+                self.last_tag = tag
+
+            self.in_marker = not tail
+            pos = end
+
+        content = source[pos:]
+        if can_compress:
+            # XXX: can we strip anything here?
+            content = compress_spaces(" ", content)
+        yield content
+
     def normalize(self, token):
         """
         given data token, parse & strip whitespace
         from it's contents using html-aware parser.
         """
-        # TODO: this doesn't handle html comments & CDATA, so tags w/in these blocks may confuse it.
-        # TODO: handle implicit start tags (e.g. colgroup)
-        pos = 0
-        buffer = []
         self.token = token
-
-        def write_data(value):
-            if not self.is_isolated():
-                if not re.match(r'.+\w\s$', value):
-                    if value[-2:] == "  ":
-                        value = value.strip()
-                value = _ws_normalize_re.sub(' ', value)
-            buffer.append(value)
-
-        for match in _tag_re.finditer(token.value):
-            closes, tag, tail = match.group("closes", "tag", "tail")
-            preamble = token.value[pos:match.start()]
-            write_data(preamble)
-            if tail:
-                assert not (closes or tag)
-                write_data(tail)
-            else:
-                buffer.append(match.group())
-                (closes and self.leave_tag or self.enter_tag)(tag)
-            pos = match.end()
-
-        write_data(token.value[pos:])
-        return u''.join(buffer)
+        return u''.join(self._feed(token.value))
 
 
 class HTMLCompress(Extension):
@@ -287,6 +338,7 @@ class HTMLCompress(Extension):
         ctx = StreamProcessContext(self, stream)
         stack = []
         active = default_active = self.active_for_stream(stream)
+        last = None
 
         while 1:
             if stream.current.type == 'block_begin':
