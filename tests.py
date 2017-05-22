@@ -92,6 +92,11 @@ class HTMLCompressTest(BaseCompressorTest):
         self.assertEqual(self.render(''' <div>   foo   <span>   bar   </span>   baz  </div>'''),
                          '''<div>foo <span>bar</span> baz</div>''')
 
+    def test_tag_case(self):
+        # check block tags detected even if mixed case
+        self.assertEqual(self.render('''<span> foo <DIV> bar </DIV> baz </span>'''),
+                         '''<span>foo<DIV>bar</DIV>baz</span>''')
+
     def test_nested(self):
         result = self.render('''
     {% strip %}

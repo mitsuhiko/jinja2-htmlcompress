@@ -250,6 +250,7 @@ class StreamProcessContext(object):
             else:
                 # found start of tag marker ("<tag")
                 # preamble should be non-tag content since last marker.
+                tag = tag.lower()
                 if can_compress:
                     # Can strip leading whitespace if followed a tag marker,
                     # but if it's at start of source, we can't know if it's needed
