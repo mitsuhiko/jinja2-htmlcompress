@@ -76,6 +76,28 @@ class HTMLCompressTest(BaseCompressorTest):
                         Indented
                 </pre><li><a href="index.html">42</a><br>Test Foo<li><a href="index.html">42</a><img src=test.png></body></html>''')
 
+    def test_unstrip_sample_1(self):
+        result = self.render('''
+        {% unstrip %}
+        Normal   <span>    unchanged </span>   stuff
+        {% endunstrip %}
+
+        Stripped <span class=foo  >   test   </span>
+        <a href="foo">  test </a> {{ foo }}
+        Normal <stuff>   again {{ foo }}  </stuff>
+        <p>
+          Foo<br>Bar
+          Baz
+        <p>
+          Moep    <span>Test</span>    Moep
+        </p>
+    ''', foo=42)
+
+        self.assertEqual(result, ''' \n\
+        Normal   <span>    unchanged </span>   stuff
+        Stripped <span class=foo>test</span> <a href="foo">test</a> 42 Normal <stuff>again 42</stuff> \
+<p>Foo<br>Bar Baz<p>Moep <span>Test</span> Moep</p>''')
+
     def test_policy_unset(self):
         self.assertEqual(self.render('''<span>  foo  bar  </span>'''),
                          '''<span>foo bar</span>''')
@@ -156,30 +178,3 @@ class SelectiveHTMLCompressTest(BaseCompressorTest):
     def test_policy_false(self):
         self.assertEqual(self.render('''<span>  foo  bar  </span>''', policies={DA_KEY: False}),
                          '''<span>  foo  bar  </span>''')
-
-
-class InvertedHTMLCompressTest(BaseCompressorTest):
-
-    compressor = InvertedSelectiveHTMLCompress
-
-    def test_sample_1(self):
-        result = self.render('''
-        {% unstrip %}
-        Normal   <span>    unchanged </span>   stuff
-        {% endunstrip %}
-
-        Stripped <span class=foo  >   test   </span>
-        <a href="foo">  test </a> {{ foo }}
-        Normal <stuff>   again {{ foo }}  </stuff>
-        <p>
-          Foo<br>Bar
-          Baz
-        <p>
-          Moep    <span>Test</span>    Moep
-        </p>
-    ''', foo=42)
-
-        self.assertEqual(result, ''' \n\
-        Normal   <span>    unchanged </span>   stuff
-        Stripped <span class=foo>test</span> <a href="foo">test</a> 42 Normal <stuff>again 42</stuff> \
-<p>Foo<br>Bar Baz<p>Moep <span>Test</span> Moep</p>''')
