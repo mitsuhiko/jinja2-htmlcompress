@@ -215,6 +215,10 @@ class StreamProcessContext(object):
         # <tag> not found in stack
         self.fail('Tried to leave %r tag, but something closed it already' % tag)
 
+    @property
+    def last_marker_needs_trailing_space(self):
+        return self.last_closed and self.last_tag not in self.spaceless_elements
+
     def _feed(self, source, strip_leading_space=False):
         """
         helper for normalize() -- takes in source string,
@@ -243,7 +247,7 @@ class StreamProcessContext(object):
                     # For inline tags, we want to preserve 1 space after closing tag marker.
                     # For all other cases, can strip trailing space.
                     content = match.group()
-                    if not self.last_closed or self.last_tag in self.spaceless_elements:
+                    if not self.last_marker_needs_trailing_space:
                         content = content.rstrip()
                     yield compress_spaces(" ", preamble + content)
                 else:
@@ -265,8 +269,8 @@ class StreamProcessContext(object):
                     if closes or tag in self.spaceless_elements:
                         preamble = preamble.rstrip()
 
-                    # if content ends with a space, we want to let tail end code handle it...
-                    # can strip space if there's no attrs in between.
+                    # if content ends with a space, it should be part of next chunk's preamble,
+                    # match.group() shouldn't have any trailing space.
                     yield compress_spaces(" ", preamble + match.group())
                 else:
                     yield source[pos:end]
@@ -281,8 +285,15 @@ class StreamProcessContext(object):
             pos = end
 
         content = source[pos:]
+        if not content:
+            return
         if can_compress:
-            # XXX: can we strip anything here?
+            # can strip leading space at end if we're outside a marker.
+            # can always strip trailing space.
+            if self.in_marker:
+                content = content.rstrip() or " "
+            else:
+                content = content.lstrip()
             content = compress_spaces(" ", content)
         yield content
 
@@ -397,10 +408,19 @@ class HTMLCompress(Extension):
                 if active:
                     value = ctx.normalize(current, strip_leading_space=strip_leading_space)
                     yield Token(current.lineno, 'data', value)
+                    if value:
+                        # next data chunk doesn't need leading space if this has one,
+                        # if we ended on open tag marker, or ended on close tag marker
+                        # for a spaceless element.
+                        strip_leading_space = (
+                            value[-1].isspace() or
+                            (value[-1] == ">" and not ctx.last_marker_needs_trailing_space)
+                        )
                 else:
                     yield current
                     value = current.value
-                strip_leading_space = (value and value[-1].isspace())
+                    if value:
+                        strip_leading_space = value[-1].isspace()
             else:
                 yield current
                 # XXX: would be easier at parser level, could skip over comment nodes;

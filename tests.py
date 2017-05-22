@@ -93,7 +93,7 @@ class HTMLCompressTest(BaseCompressorTest):
         </p>
     ''', foo=42)
 
-        self.assertEqual(result, ''' \n\
+        self.assertEqual(result, '''\n\
         Normal   <span>    unchanged </span>   stuff
         Stripped <span class=foo>test</span> <a href="foo">test</a> 42 Normal <stuff>again 42</stuff> \
 <p>Foo<br>Bar Baz<p>Moep <span>Test</span> Moep</p>''')
@@ -146,7 +146,7 @@ class HTMLCompressTest(BaseCompressorTest):
     def test_internal_space(self):
         # issue 8
         result = self.render('''<th class="{%if 1%}firstcol  {% endif %}  cell_style">''')
-        self.assertEqual(result, '''<th class="firstcol  cell_style">''')
+        self.assertEqual(result, '''<th class="firstcol cell_style">''')
 
 class SelectiveHTMLCompressTest(BaseCompressorTest):
 
