@@ -11,8 +11,6 @@
 """
 from __future__ import print_function
 import re
-import sys
-import os
 from warnings import warn
 
 PY2 = sys.version_info < (3,0)
@@ -39,18 +37,6 @@ _tag_re = re.compile(r'''
 _ws_normalize_re = re.compile(r'\s+', re.U)
 
 
-class StreamProcessContext(object):
-
-    def __init__(self, stream):
-        self.stream = stream  # reference to TokenStream
-        self.token = None  # current data token we're parsing html for
-        self.stack = []  # stack of html tags we're within
-
-    def fail(self, message):
-        raise TemplateSyntaxError(message, self.token.lineno,
-                                  self.stream.name, self.stream.filename)
-
-
 def _compile_implicit_close_map(source):
     result = {}
     for keys, value in source.items():
@@ -67,9 +53,11 @@ DEFAULT_ACTIVE_KEY = "htmlcompress.default_active"
 LAST_CHILD = "#last-child"
 
 
-class HTMLCompress(Extension):
+
+class StreamProcessContext(object):
     """
-    Compression always on
+    Helper class which handles (loosely) parsing HTML state, and stripping whitespace 
+    from tokens.
     """
 
     # NOTE: All of the following taken from HTML5 spec,
@@ -144,32 +132,24 @@ class HTMLCompress(Extension):
     #: taken from HTML5 sec 8.1.2.4
     p_no_implicit_close_inside_elements = set("a audio del ins map noscript video".split())
 
-    #: whether class should default to active (override by policy)
-    default_active = True
+    def __init__(self, ext, stream):
+        self.ext = ext  # HTMLCompress instance we're bound to
+        self.stream = stream  # reference to TokenStream
+        self.token = None  # current data token we're parsing html for
+        self.stack = []  # stack of html tags we're within
 
-    def get_policy_key(self, key, default=None):
-        """
-        helper to read key from policies dict.
-        """
-        # NOTE: policy dict not added until jinja 2.9
-        policies = getattr(self.environment, "policies", None) or {}
-        return policies.get(key, default)
+    def fail(self, message, token=None):
+        if token is None:
+            token = self.token
+            assert token
+        raise TemplateSyntaxError(message, token.lineno,
+                                  self.stream.name, self.stream.filename)
 
-    def active_for_stream(self, stream):
-        """
-        test if stripping should be enabled by default for specified template
-        """
-        # TODO: check stream.filename, and only activate for certain exts, ala autoescape.
-        return self.get_policy_key(DEFAULT_ACTIVE_KEY, self.default_active)
-
-    def is_isolated(self, stack):
+    def is_isolated(self):
         """
         test if stripping should be suppressed because we're in a whitespace-critical element.
         """
-        for tag in reversed(stack):
-            if tag in self.isolated_elements:
-                return True
-        return False
+        return not self.isolated_elements.isdisjoint(self.stack)
 
     def allow_implicit_close_before(self, tag, next_tag):
         """
@@ -188,23 +168,24 @@ class HTMLCompress(Extension):
             return parent_tag not in self.p_no_implicit_close_inside_elements
         return self.allow_implicit_close_before(tag, LAST_CHILD)
 
-    def enter_tag(self, tag, ctx):
+    def enter_tag(self, tag):
         """
         register opening of new tag
         """
         # implicitly close all tags that can be implicitly closed when followed by <tag>
-        while ctx.stack and self.allow_implicit_close_before(ctx.stack[-1], tag):
-            self.leave_tag(ctx.stack[-1], ctx)
+        stack = self.stack
+        while stack and self.allow_implicit_close_before(stack[-1], tag):
+            self.leave_tag(stack[-1])
 
         # if tag isn't self-closing, add it to stack
         if tag not in self.void_elements:
-            ctx.stack.append(tag)
+            stack.append(tag)
 
-    def leave_tag(self, tag, ctx):
+    def leave_tag(self, tag):
         """
         roll back stack to explicitly close <tag>
         """
-        stack = ctx.stack
+        stack = self.stack
         end = len(stack)
         while end > 0:
             end -= 1
@@ -223,39 +204,65 @@ class HTMLCompress(Extension):
                 return
 
         # <tag> not found in stack
-        ctx.fail('Tried to leave %r tag, but something closed it already' % tag)
+        self.fail('Tried to leave %r tag, but something closed it already' % tag)
 
-    def normalize(self, ctx):
+    def normalize(self, token):
         """
-        given ctx.token set to a data token, parse & strip whitespace
+        given data token, parse & strip whitespace
         from it's contents using html-aware parser.
         """
         # TODO: this doesn't handle html comments & CDATA, so tags w/in these blocks may confuse it.
         # TODO: handle implicit start tags (e.g. colgroup)
         pos = 0
         buffer = []
+        self.token = token
+
         def write_data(value):
-            if not self.is_isolated(ctx.stack):
+            if not self.is_isolated():
                 if not re.match(r'.+\w\s$', value):
                     if value[-2:] == "  ":
                         value = value.strip()
                 value = _ws_normalize_re.sub(' ', value)
             buffer.append(value)
 
-        for match in _tag_re.finditer(ctx.token.value):
+        for match in _tag_re.finditer(token.value):
             closes, tag, tail = match.group("closes", "tag", "tail")
-            preamble = ctx.token.value[pos:match.start()]
+            preamble = token.value[pos:match.start()]
             write_data(preamble)
             if tail:
                 assert not (closes or tag)
                 write_data(tail)
             else:
                 buffer.append(match.group())
-                (closes and self.leave_tag or self.enter_tag)(tag, ctx)
+                (closes and self.leave_tag or self.enter_tag)(tag)
             pos = match.end()
 
-        write_data(ctx.token.value[pos:])
+        write_data(token.value[pos:])
         return u''.join(buffer)
+
+
+class HTMLCompress(Extension):
+    """
+    Compression always on
+    """
+
+    #: whether class should default to active (override by policy)
+    default_active = True
+
+    def get_policy_key(self, key, default=None):
+        """
+        helper to read key from policies dict.
+        """
+        # NOTE: policy dict not added until jinja 2.9
+        policies = getattr(self.environment, "policies", None) or {}
+        return policies.get(key, default)
+
+    def active_for_stream(self, stream):
+        """
+        test if stripping should be enabled by default for specified template
+        """
+        # TODO: check stream.filename, and only activate for certain exts, ala autoescape.
+        return self.get_policy_key(DEFAULT_ACTIVE_KEY, self.default_active)
 
     def filter_stream(self, stream):
         """
@@ -277,7 +284,7 @@ class HTMLCompress(Extension):
         #
         #        At a minimum, this code should try to detect & warn user about these cases.
 
-        ctx = StreamProcessContext(stream)
+        ctx = StreamProcessContext(self, stream)
         stack = []
         active = default_active = self.active_for_stream(stream)
 
@@ -303,7 +310,7 @@ class HTMLCompress(Extension):
                 elif peek_next.test('name:endstrip'):
                     # {% endstrip %}
                     if not (stack and stack[-1] is not None):
-                        ctx.fail('Unexpected tag endstrip')
+                        ctx.fail('Unexpected tag endstrip', token=peek_next)
                     stream.skip(2)
                     stream.expect("block_end")
                     stack.pop()
@@ -311,7 +318,8 @@ class HTMLCompress(Extension):
 
                 elif stream.look().test('name:unstrip'):
                     # {% unstrip %}
-                    warn("`{% unstrip %}` blocks are deprecated, use `{% strip false %}` instead", DeprecationWarning)
+                    warn("`{% unstrip %}` blocks are deprecated, use `{% strip false %}` instead",
+                         DeprecationWarning)
                     stream.skip(2)
                     stream.expect("block_end")
                     stack.append(None)
@@ -328,8 +336,7 @@ class HTMLCompress(Extension):
 
             current = stream.current
             if active and current.type == 'data':
-                ctx.token = current
-                value = self.normalize(ctx)
+                value = ctx.normalize(current)
                 yield Token(current.lineno, 'data', value)
             else:
                 yield current
