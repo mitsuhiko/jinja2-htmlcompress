@@ -43,8 +43,10 @@ setup(
     classifiers=CLASSIFIERS,
 
     # package info
-    packages=find_packages(),
-    package_data={},
+    zip_safe=True,
+    py_modules=["jinja2htmlcompress"],
+    #packages=find_packages(),
+    #package_data={},
 )
 
 #=============================================================================
