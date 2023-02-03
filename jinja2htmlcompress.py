@@ -15,7 +15,7 @@ from jinja2.lexer import Token, describe_token
 from jinja2 import TemplateSyntaxError
 
 
-_tag_re = re.compile(r'(?:<(/?)([a-zA-Z0-9_-]+)\s*|(>\s*))(?s)')
+_tag_re = re.compile(r"(?:<(/?)([a-zA-Z0-9_-]+)\s*|(>\s*))", re.DOTALL)
 _ws_normalize_re = re.compile(r'[ \t\r\n]+')
 
 
